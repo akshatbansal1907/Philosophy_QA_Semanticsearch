@@ -1,10 +1,21 @@
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict, List
+
 import numpy as np
 from fastembed import TextEmbedding
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR
+
+# The repository currently keeps the five knowledge documents beside the
+# application files. Keep this list explicit so files such as requirements.txt
+# are never accidentally treated as documents.
+DOCUMENT_NAMES = (
+    "epistemology.txt",
+    "ethics.txt",
+    "existentialism.txt",
+    "metaphysics.txt",
+    "stoicism.txt",
+)
 
 # FastEmbed uses ONNX Runtime rather than loading PyTorch/Sentence-Transformers.
 # This keeps RAM usage much lower on small Render instances.
@@ -22,28 +33,47 @@ class SemanticSearchEngine:
         self.embeddings = self._normalize(self.embeddings)
 
     @staticmethod
-    def _normalize(matrix):
+    def _normalize(matrix: np.ndarray) -> np.ndarray:
         norms = np.linalg.norm(matrix, axis=1, keepdims=True)
         return matrix / np.maximum(norms, 1e-12)
 
     def _load_documents(self) -> List[Dict]:
         documents = []
-        for path in sorted(DATA_DIR.glob("*.txt")):
+        missing = []
+
+        for filename in DOCUMENT_NAMES:
+            path = BASE_DIR / filename
+            if not path.is_file():
+                missing.append(filename)
+                continue
+
             content = path.read_text(encoding="utf-8").strip()
             paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
             if len(paragraphs) < 2:
-                raise ValueError(f"{path.name} must contain at least 2 paragraphs.")
-            documents.append({
-                "id": path.stem,
-                "title": path.stem.replace("_", " ").title(),
-                "content": content,
-                "paragraphs": paragraphs,
-            })
+                raise ValueError(f"{filename} must contain at least 2 paragraphs.")
+
+            documents.append(
+                {
+                    "id": path.stem,
+                    "title": path.stem.replace("_", " ").title(),
+                    "content": content,
+                    "paragraphs": paragraphs,
+                }
+            )
+
+        if missing:
+            raise FileNotFoundError(
+                "Missing required philosophy documents: " + ", ".join(missing)
+            )
         if len(documents) < 5:
             raise ValueError("At least 5 documents are required.")
         return documents
 
     def search(self, query: str, top_k: int = 3) -> List[Dict]:
+        query = query.strip()
+        if not query:
+            raise ValueError("Question cannot be empty.")
+
         query_vector = np.asarray(
             list(self.model.embed([query])),
             dtype=np.float32,
