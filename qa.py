@@ -1,53 +1,52 @@
-import os
-from typing import Any, Dict
+import re
+from typing import Any, Dict, List, Tuple
 
-from huggingface_hub import InferenceClient
-
-QA_MODEL = "distilbert/distilbert-base-cased-distilled-squad"
+_WORDS = re.compile(r"[A-Za-z][A-Za-z'-]{1,}")
+_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "does", "for",
+    "from", "how", "in", "is", "it", "of", "on", "or", "that", "the",
+    "this", "to", "what", "when", "which", "who", "why", "with",
+}
 
 
 class ExtractiveQAModel:
-    """Render-safe extractive QA using the Hugging Face Inference API."""
+    """Small, local extractive QA implementation with no API key or model service.
 
-    def __init__(self):
-        token = os.getenv("HF_TOKEN")
-        self.client = (
-            InferenceClient(provider="hf-inference", api_key=token)
-            if token
-            else InferenceClient(provider="hf-inference")
-        )
+    It selects the most relevant sentence(s) from the retrieved document. This
+    keeps the Render deployment reliable and avoids external inference failures.
+    """
+
+    @staticmethod
+    def _tokens(text: str) -> set[str]:
+        return {
+            word.lower()
+            for word in _WORDS.findall(text)
+            if word.lower() not in _STOPWORDS
+        }
 
     def answer(self, question: str, context: str) -> Dict[str, Any]:
-        try:
-            result = self.client.question_answering(
-                question=question,
-                context=context,
-                model=QA_MODEL,
-                handle_impossible_answer=True,
-                top_k=1,
-            )
-        except Exception as exc:
-            message = str(exc)
-            if "401" in message or "Unauthorized" in message or "Invalid username or password" in message:
-                raise RuntimeError(
-                    "Hugging Face authentication failed. Set a valid HF_TOKEN in the Render environment variables."
-                ) from exc
-            raise RuntimeError(f"QA request failed: {message}") from exc
+        question_tokens = self._tokens(question)
+        sentences = [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", context.strip())
+            if sentence.strip()
+        ]
+        if not sentences:
+            return {"answer": "No answer found.", "score": 0.0, "start": 0, "end": 0}
 
-        if isinstance(result, dict):
-            answer = result.get("answer", "")
-            score = result.get("score", 0.0)
-            start = result.get("start", 0)
-            end = result.get("end", 0)
-        else:
-            answer = getattr(result, "answer", "")
-            score = getattr(result, "score", 0.0)
-            start = getattr(result, "start", 0)
-            end = getattr(result, "end", 0)
+        scored: List[Tuple[float, str]] = []
+        for sentence in sentences:
+            sentence_tokens = self._tokens(sentence)
+            overlap = question_tokens & sentence_tokens
+            coverage = len(overlap) / max(len(question_tokens), 1)
+            density = len(overlap) / max(len(sentence_tokens), 1)
+            scored.append((coverage * 0.75 + density * 0.25, sentence))
 
+        score, answer = max(scored, key=lambda item: item[0])
+        start = context.find(answer)
         return {
-            "answer": str(answer).strip() or "No answer found in the selected document.",
-            "score": float(score),
-            "start": int(start),
-            "end": int(end),
+            "answer": answer,
+            "score": float(min(score, 1.0)),
+            "start": max(start, 0),
+            "end": max(start, 0) + len(answer),
         }

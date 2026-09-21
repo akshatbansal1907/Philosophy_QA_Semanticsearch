@@ -1,92 +1,33 @@
-# Philosophy QA Semantic Search — Render Compatible
+# Philosophy QA Semantic Search — Render Ready
 
-**Roll No.: 09 | Experiment 7 | Topic: Philosophy**
+This application performs semantic search with FastEmbed and local extractive question answering. It does **not** require `HF_TOKEN`, Hugging Face credentials, or any external inference service.
 
-This version is designed for a small-memory Render web service.
+## Render deployment
 
-## Why the original deployment failed
+Create a Render **Web Service** for this repository. Render can use `render.yaml`, or configure:
 
-The original version loaded both Sentence-Transformers/PyTorch and a local Transformers QA model. Render reported:
+- Build command: `pip install -r requirements.txt`
+- Start command: `uvicorn api:app --host 0.0.0.0 --port $PORT`
+- Health check path: `/health`
 
-`Out of memory (used over 512Mi)`
+No environment variables are required.
 
-## Render-compatible architecture
+## How it works
 
-```text
-Question
-   |
-   v
-FastEmbed (ONNX, lightweight)
-   |
-   v
-True dense embedding
-   |
-   v
-Cosine similarity
-   |
-   v
-Best Philosophy document
-   |
-   v
-Hugging Face Inference API
-   |
-   v
-Extractive QA answer
-```
+1. FastEmbed creates dense embeddings for the five philosophy documents.
+2. Cosine similarity selects the most relevant document.
+3. A local extractive QA component selects the most relevant answer sentence.
 
-FastEmbed uses ONNX Runtime and is designed to be lighter than Transformer/Sentence-Transformer runtime stacks. The QA model is called remotely so the Render process does not load PyTorch and the QA model into its 512 MiB RAM.
+The local QA design is intentional: it avoids 401 errors, API rate limits, cold-start network failures, and large local Transformer memory requirements on small Render instances.
 
-## Files
+The source documents are `epistemology.txt`, `ethics.txt`, `existentialism.txt`, `metaphysics.txt`, and `stoicism.txt`.
 
-- `api.py` — Render web API + browser UI
-- `semantic_search.py` — true embeddings + cosine similarity
-- `qa.py` — Hugging Face extractive QA
-- `app.py` — optional local Streamlit UI
-- `run.py` — local Uvicorn launcher
-- `render.yaml` — Render configuration
-- `requirements.txt`
-- `data/` — 5 philosophy documents
-- `tests/`
+## Test
 
-## Render settings
+Open the deployed URL and ask, for example:
 
-Build Command:
-```text
-pip install -r requirements.txt
-```
+- `What does Stoicism teach about control?`
+- `What is epistemology?`
+- `What does virtue ethics focus on?`
 
-Start Command:
-```text
-uvicorn api:app --host 0.0.0.0 --port $PORT
-```
-
-Environment Variable:
-```text
-HF_TOKEN = your Hugging Face access token
-```
-
-The token is used only by the Hugging Face client for the remote extractive QA call. Do not put the token inside GitHub source files.
-
-## Test after deployment
-
-Open:
-
-```text
-https://YOUR-RENDER-SERVICE.onrender.com/
-```
-
-Health check:
-
-```text
-https://YOUR-RENDER-SERVICE.onrender.com/health
-```
-
-Try:
-
-`What does Stoicism teach about controlling emotions?`
-
-## Important
-
-The semantic-search stage still uses **true embeddings**, not TF-IDF or Bag-of-Words. FastEmbed's ONNX model produces dense vectors, and the code calculates cosine similarity using normalized vectors.
-
-The QA stage uses an actual extractive QA model (`distilbert/distilbert-base-cased-distilled-squad`) through Hugging Face Inference Providers, avoiding local model memory usage on Render.
+Health endpoint: `/health`
