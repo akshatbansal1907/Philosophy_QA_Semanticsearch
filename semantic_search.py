@@ -5,10 +5,6 @@ import numpy as np
 from fastembed import TextEmbedding
 
 BASE_DIR = Path(__file__).resolve().parent
-
-# The repository currently keeps the five knowledge documents beside the
-# application files. Keep this list explicit so files such as requirements.txt
-# are never accidentally treated as documents.
 DOCUMENT_NAMES = (
     "epistemology.txt",
     "ethics.txt",
@@ -17,8 +13,6 @@ DOCUMENT_NAMES = (
     "stoicism.txt",
 )
 
-# FastEmbed uses ONNX Runtime rather than loading PyTorch/Sentence-Transformers.
-# This keeps RAM usage much lower on small Render instances.
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 
 
@@ -80,7 +74,6 @@ class SemanticSearchEngine:
         )
         query_vector = self._normalize(query_vector)[0]
 
-        # Both vectors are L2-normalized, so their dot product is cosine similarity.
         scores = self.embeddings @ query_vector
         indices = np.argsort(scores)[::-1][:top_k]
 
