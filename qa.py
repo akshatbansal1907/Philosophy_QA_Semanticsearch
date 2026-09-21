@@ -1,40 +1,53 @@
 import os
+from typing import Any, Dict
+
 from huggingface_hub import InferenceClient
 
 QA_MODEL = "distilbert/distilbert-base-cased-distilled-squad"
 
 
 class ExtractiveQAModel:
-    """
-    Render-safe extractive QA.
-
-    The QA model runs through Hugging Face Inference Providers instead of
-    loading PyTorch/Transformers into the 512 MiB Render process.
-    """
+    """Render-safe extractive QA using the Hugging Face Inference API."""
 
     def __init__(self):
         token = os.getenv("HF_TOKEN")
-        if not token:
-            raise RuntimeError(
-                "HF_TOKEN is not configured. Add a Hugging Face token in "
-                "Render Environment Variables."
-            )
-        self.client = InferenceClient(
-            provider="hf-inference",
-            api_key=token,
+        self.client = (
+            InferenceClient(provider="hf-inference", api_key=token)
+            if token
+            else InferenceClient(provider="hf-inference")
         )
 
-    def answer(self, question: str, context: str):
-        result = self.client.question_answering(
-            question=question,
-            context=context,
-            model=QA_MODEL,
-            handle_impossible_answer=True,
-            top_k=1,
-        )
+    def answer(self, question: str, context: str) -> Dict[str, Any]:
+        try:
+            result = self.client.question_answering(
+                question=question,
+                context=context,
+                model=QA_MODEL,
+                handle_impossible_answer=True,
+                top_k=1,
+            )
+        except Exception as exc:
+            message = str(exc)
+            if "401" in message or "Unauthorized" in message or "Invalid username or password" in message:
+                raise RuntimeError(
+                    "Hugging Face authentication failed. Set a valid HF_TOKEN in the Render environment variables."
+                ) from exc
+            raise RuntimeError(f"QA request failed: {message}") from exc
+
+        if isinstance(result, dict):
+            answer = result.get("answer", "")
+            score = result.get("score", 0.0)
+            start = result.get("start", 0)
+            end = result.get("end", 0)
+        else:
+            answer = getattr(result, "answer", "")
+            score = getattr(result, "score", 0.0)
+            start = getattr(result, "start", 0)
+            end = getattr(result, "end", 0)
+
         return {
-            "answer": result.answer.strip(),
-            "score": float(result.score),
-            "start": int(result.start),
-            "end": int(result.end),
+            "answer": str(answer).strip() or "No answer found in the selected document.",
+            "score": float(score),
+            "start": int(start),
+            "end": int(end),
         }
